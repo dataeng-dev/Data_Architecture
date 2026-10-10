@@ -126,3 +126,4 @@ CALL ducklake_merge_adjacent_files('lake');  -- compacta archivos pequeños (p. 
 1. `pipeline/layers/silver.py`: tipado, limpieza, deduplicación y nombres estandarizados.
 2. `pipeline/layers/gold.py`: modelo dimensional (hechos/dimensiones) para BI.
 3. Registrar ambas capas en `LAYERS` (`pipeline/orchestrator.py`).
+# Business_Intelligence-Data_Architecture
