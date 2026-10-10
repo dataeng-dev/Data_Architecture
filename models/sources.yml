@@ -1,0 +1,30 @@
+version: 2
+
+sources:
+  - name: lake_data
+    schema: main
+    tables:
+      - name: campaign_desc
+        meta:
+          external_location: "read_csv_auto('data/campaign_desc.csv', all_varchar=true)"
+      - name: campaign_table
+        meta:
+          external_location: "read_csv_auto('data/campaign_table.csv', all_varchar=true)"
+      - name: causal_data
+        meta:
+          external_location: "read_csv_auto('data/causal_data.csv', all_varchar=true)"
+      - name: coupon
+        meta:
+          external_location: "read_csv_auto('data/coupon.csv', all_varchar=true)"
+      - name: coupon_redempt
+        meta:
+          external_location: "read_csv_auto('data/coupon_redempt.csv', all_varchar=true)"
+      - name: hh_demographic
+        meta:
+          external_location: "read_csv_auto('data/hh_demographic.csv', all_varchar=true)"
+      - name: product
+        meta:
+          external_location: "read_csv_auto('data/product.csv', all_varchar=true)"
+      - name: transaction_data
+        meta:
+          external_location: "read_csv_auto('data/transaction_data.csv', all_varchar=true)"

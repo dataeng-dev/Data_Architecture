@@ -1,0 +1,9 @@
+lakehouse:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: ':memory:'
+      # Conectar dbt a ducklake usando nuestro plugin personalizado
+      plugins:
+        - module: dbt_plugin
