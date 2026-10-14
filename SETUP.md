@@ -27,11 +27,11 @@ El proyecto divide el almacenamiento lógico y físico en capas de refinamiento:
 
 ### 2.2. Flujo de los Datos
 1. Archivos crudos residen en `/data` en formato CSV.
-2. El Orquestador (`pipeline/layers/bronze.py`) se inicializa.
+2. El Orquestador (`pipeline/orchestrator.py`) inicializa la capa bronce (`pipeline/layers/bronze.py`).
 3. El Orquestador levanta una instancia de `dbt run --select bronze`.
 4. `dbt` lee los modelos definidos en `/models/bronze/` e instruye a DuckDB, vía un plugin adaptado para DuckLake (`dbt_plugin.py`), a cargar los CSV usando `read_csv_auto(..., all_varchar=true)`.
 5. DuckLake encapsula el almacenamiento: divide la carga en archivos `.parquet` guardados en `database/lake_data` y guarda los metadatos en `database/metadata.sqlite`.
-6. Al finalizar, el orquestador registra el volumen ingresado y los tiempos en una tabla de auditoría (`audit.ingestion_log`).
+6. Al finalizar, el orquestador registra el volumen ingresado y los tiempos en una tabla de auditoría (`audit.ingestion_log`). El orquestador le pasa a dbt su `batch_id` (`--vars`), de modo que la columna `_batch_id` de cada fila coincide con la bitácora.
 
 ---
 

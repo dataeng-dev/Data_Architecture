@@ -14,6 +14,7 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
+from pipeline.config import settings
 from pipeline.core import catalog
 from pipeline.core.base import StepResult
 from pipeline.orchestrator import LAYERS, Pipeline
@@ -22,7 +23,7 @@ from pipeline.orchestrator import LAYERS, Pipeline
 # Configuración inicial de la página
 # -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="DuckLake Medallion",
+    page_title="Arquitectura de Datos: Ducklake",
     page_icon="🦆",
     layout="wide",
 )
@@ -45,7 +46,7 @@ def initialize_session_state():
 def render_sidebar() -> str:
     """Dibuja el menú lateral y devuelve el nombre de la página seleccionada."""
     with st.sidebar:
-        st.title("🦆 DuckLake")
+        st.title("🦆 Arquitectura de Datos: Ducklake")
         st.markdown("### Arquitectura Medallón")
         
         # Pestañas de navegación
@@ -56,7 +57,7 @@ def render_sidebar() -> str:
         )
         
         st.markdown("---")
-        st.caption("Hecho con ❤️ y DuckDB")
+        st.caption("Curso: Inteligencia de Negocios")
         return page
 
 # -----------------------------------------------------------------------------
@@ -102,7 +103,11 @@ def view_run_pipeline():
         tables_list = tables_input.split() if tables_input.strip() else None
         layers_to_run = None if layer_option == "all" else [layer_option]
 
-        # Variable mutable para rastrear el progreso
+        # Variable mutable para rastrear el progreso. Cada tabla terminada
+        # avanza la barra en la misma proporción (hasta 90%; el 100% se
+        # marca al final).
+        expected_tables = len(tables_list) if tables_list else len(settings.SOURCES)
+        step_size = max(1, 90 // max(1, expected_tables))
         state = {"progress": 0}
 
         # Estos callbacks (`on_start`, `on_step`) se enviarán al Pipeline.
@@ -110,13 +115,13 @@ def view_run_pipeline():
         # pipeline necesite saber nada sobre Streamlit.
         
         def handle_start(table_name: str):
-            """Se llama justo antes de cargar una tabla."""
-            progress_text.text(f"⏳ Iniciando carga de la tabla '{table_name}'...")
+            """Se llama justo antes de iniciar la carga."""
+            progress_text.text(f"⏳ Cargando {table_name}... (las tablas grandes pueden tardar varios minutos)")
         
         def handle_step(result: StepResult):
             """Se llama justo después de cargar (o fallar) una tabla."""
-            # Avanzamos un poco la barra (hasta max 90%)
-            state["progress"] = min(state["progress"] + 20, 90)
+            # Avanzamos la barra (hasta max 90%)
+            state["progress"] = min(state["progress"] + step_size, 90)
             progress_bar.progress(state["progress"])
 
             # Escribimos en el registro visual
@@ -144,7 +149,7 @@ def view_run_pipeline():
             if errores:
                 st.error(f"⚠️ El pipeline terminó con errores: {len(errores)} tabla(s) fallaron.")
             else:
-                st.balloons()
+                st.success(f"✅ Pipeline completado: {len(results)} tabla(s) cargadas sin errores.")
                 
         except Exception as e:
             # Si se rompe algo muy grave en el orquestador

@@ -24,38 +24,46 @@ Reglas de esta capa
      * _batch_id:     identificador de la ejecución que la cargó.
      * _source_file:  archivo CSV de donde vino.
      * _ingested_at:  fecha y hora exacta de la carga.
-   Además, cada carga queda anotada en la tabla `audit.ingestion_log` y en
-   el historial de versiones de DuckLake, con un mensaje descriptivo.
+   El valor de `_batch_id` es el mismo que queda en la bitácora
+   `audit.ingestion_log`, así se puede cruzar cada fila con su carga.
+   Además, cada carga crea una nueva versión (snapshot) en DuckLake.
 
 3. CARGA COMPLETA (full refresh)
    En cada ejecución la tabla se reemplaza por completo con el contenido
    actual del CSV. No se pierde la historia: DuckLake guarda las versiones
    anteriores y se pueden consultar ("viaje en el tiempo" o time travel).
 
-4. TODO O NADA (transacciones)
-   Cada tabla se carga dentro de una TRANSACCIÓN: o se guarda completa o no
-   se guarda nada. Nunca queda una tabla a medio cargar.
+4. TODO O NADA
+   dbt construye primero la tabla nueva y solo reemplaza la anterior si la
+   carga terminó bien. Nunca queda una tabla a medio cargar.
+
+¿Quién hace la carga?
+---------------------
+Los modelos dbt de `models/bronze/` (un archivo .sql por tabla). Esta clase
+ejecuta `dbt run`, lee el resultado (`target/run_results.json`) y lo anota
+en la bitácora.
 """
 
 import json
 import os
 import subprocess
-import time
 
 import duckdb
 
 from pipeline.config import settings
 from pipeline.core.base import Layer, StepResult
-from pipeline.core.lakehouse import set_commit_message
 from typing import Callable
 
 CAT = settings.CATALOG_NAME
 BRONZE = f"{CAT}.{settings.SCHEMA_BRONZE}"
 INGESTION_LOG = f"{CAT}.{settings.SCHEMA_AUDIT}.ingestion_log"
 
+# Archivo donde dbt deja el resultado de cada modelo al terminar `dbt run`.
+RUN_RESULTS_PATH = settings.PROJECT_ROOT / "target" / "run_results.json"
+
 
 class BronzeLayer(Layer):
-    """Capa bronce: ahora gestionada mediante modelos dbt.
+    """Capa bronce: gestionada mediante modelos dbt (`models/bronze/`).
 
     Actúa como un puente que ejecuta `dbt run` y luego registra los
     resultados en la bitácora para mantener la compatibilidad con
@@ -72,72 +80,94 @@ class BronzeLayer(Layer):
         on_start: Callable[[str], None] | None = None,
         on_step: Callable[[StepResult], None] | None = None,
     ) -> list[StepResult]:
-        
+
         self._ensure_ingestion_log(con)
-        
+
         self.log.info("Iniciando capa bronce mediante dbt | batch=%s", batch_id)
 
-        # Construir comando dbt
-        cmd = ["uv", "run", "dbt", "run", "--select", "bronze", "--profiles-dir", "."]
-        if tables:
-            # Filtrar por los modelos específicos
-            models_to_run = [f"bronze_{t}" for t in tables]
-            # O simplemente el nombre del modelo. Los modelos los nombramos igual que la tabla.
-            cmd = ["uv", "run", "dbt", "run", "--select"] + tables + ["--profiles-dir", "."]
-            
-        # Ejecutar dbt
+        # --- Construir el comando dbt ---------------------------------------
+        # Los modelos dbt se llaman igual que la tabla (p. ej. `product`), así
+        # que para cargar solo algunas tablas basta con seleccionarlas por nombre.
+        selection = tables if tables else ["bronze"]
+        cmd = [
+            "uv", "run", "dbt", "run",
+            "--select", *selection,
+            "--profiles-dir", ".",
+            # Le pasamos a dbt el batch_id del pipeline para que quede en la
+            # columna `_batch_id` de cada fila. Así la tabla y la bitácora
+            # (`audit.ingestion_log`) comparten el mismo identificador.
+            "--vars", json.dumps({"batch_id": batch_id}),
+        ]
+
         self.log.info("Ejecutando: %s", " ".join(cmd))
-        
+
         if on_start:
-            on_start("dbt run")
-            
+            on_start(", ".join(tables) if tables else "todas las tablas de bronce")
+
+        # Borramos el resultado de la ejecución anterior: si dbt fallara antes
+        # de escribir uno nuevo, no queremos registrar resultados viejos como
+        # si fueran de esta corrida.
+        RUN_RESULTS_PATH.unlink(missing_ok=True)
+
         # Añadir PYTHONPATH para que dbt encuentre dbt_plugin.py
         env = os.environ.copy()
         env["PYTHONPATH"] = str(settings.PROJECT_ROOT)
         process = subprocess.run(cmd, capture_output=True, text=True, cwd=settings.PROJECT_ROOT, env=env)
-        
+
         if process.returncode != 0:
-            self.log.error("dbt run falló:\n%s", process.stdout)
-            
-        # Leer resultados
-        run_results_path = settings.PROJECT_ROOT / "target" / "run_results.json"
-        results = []
-        
-        if run_results_path.exists():
-            with open(run_results_path, encoding="utf-8") as f:
-                data = json.load(f)
-                
-            for result in data.get("results", []):
-                # unique_id es del tipo: model.lakehouse_dbt.bronze.product
-                model_id = result.get("unique_id", "")
-                table_name = model_id.split(".")[-1]
-                
-                status_dbt = result.get("status")
-                seconds = result.get("execution_time", 0.0)
-                
-                # Intentar obtener filas insertadas si está disponible
-                adapter_response = result.get("adapter_response", {})
-                rows = adapter_response.get("rows_affected", 0)
-                
-                error_msg = result.get("message") if status_dbt == "error" else None
-                status = "SUCCESS" if status_dbt == "success" else "FAILED"
-                
-                # Obtener la cuenta de filas consultando directamente la tabla si fue exitoso
-                if status == "SUCCESS":
-                    try:
-                        rows = con.execute(f"SELECT count(*) FROM {BRONZE}.{table_name}").fetchone()[0]
-                    except Exception:
-                        pass
-                
-                step_result = StepResult(self.name, table_name, status, rows, seconds, error_msg)
+            self.log.error("dbt run falló:\n%s\n%s", process.stdout, process.stderr)
+
+        # --- Leer resultados ------------------------------------------------
+        results: list[StepResult] = []
+
+        if not RUN_RESULTS_PATH.exists():
+            # dbt no llegó a ejecutar modelos (error de configuración, de
+            # compilación, dbt no instalado...). Se registra como fallo para
+            # que la app y el CLI lo muestren en lugar de terminar "en blanco".
+            output = (process.stdout + "\n" + process.stderr).strip()
+            error_msg = output[-2000:] or f"dbt terminó con código {process.returncode}"
+            for table_name in tables or [s.table_name for s in settings.SOURCES]:
+                step_result = StepResult(self.name, table_name, "FAILED", 0, 0.0, error_msg)
                 results.append(step_result)
-                
-                # Insertar en bitácora
-                self._log_ingestion(con, batch_id, table_name, f"{table_name}.csv", rows, seconds, status, error_msg)
-                
+                self._log_ingestion(con, batch_id, table_name, f"{table_name}.csv", 0, 0.0, "FAILED", error_msg)
                 if on_step:
                     on_step(step_result)
-                    
+            return results
+
+        with open(RUN_RESULTS_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+
+        for result in data.get("results", []):
+            # unique_id es del tipo: model.lakehouse_dbt.product
+            model_id = result.get("unique_id", "")
+            table_name = model_id.split(".")[-1]
+
+            status_dbt = result.get("status")
+            seconds = result.get("execution_time") or 0.0
+
+            # Intentar obtener filas insertadas si está disponible
+            adapter_response = result.get("adapter_response") or {}
+            rows = adapter_response.get("rows_affected") or 0
+
+            status = "SUCCESS" if status_dbt == "success" else "FAILED"
+            error_msg = None if status == "SUCCESS" else (result.get("message") or f"dbt status: {status_dbt}")
+
+            # Obtener la cuenta de filas consultando directamente la tabla si fue exitoso
+            if status == "SUCCESS":
+                try:
+                    rows = con.execute(f"SELECT count(*) FROM {BRONZE}.{table_name}").fetchone()[0]
+                except Exception:
+                    pass
+
+            step_result = StepResult(self.name, table_name, status, rows, seconds, error_msg)
+            results.append(step_result)
+
+            # Insertar en bitácora
+            self._log_ingestion(con, batch_id, table_name, f"{table_name}.csv", rows, seconds, status, error_msg)
+
+            if on_step:
+                on_step(step_result)
+
         return results
 
     @staticmethod

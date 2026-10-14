@@ -4,9 +4,12 @@
     schema='bronze'
 ) }}
 
+-- Capa bronce: copia fiel del CSV (todo VARCHAR) + columnas de auditoría.
+-- `batch_id` lo envía el pipeline (--vars); si dbt se ejecuta a mano, se usa
+-- el invocation_id de dbt.
 select
     *,
-    current_timestamp as ingested_at,
-    'hh_demographic.csv' as file_name,
-    '{{ invocation_id }}' as batch_id
+    '{{ var("batch_id", invocation_id) }}' as _batch_id,
+    'hh_demographic.csv' as _source_file,
+    current_timestamp as _ingested_at
 from {{ source('lake_data', 'hh_demographic') }}

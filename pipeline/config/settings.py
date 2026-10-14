@@ -148,7 +148,10 @@ class SourceTable:
 # Los datos corresponden al conjunto público "Dunnhumby – The Complete
 # Journey": compras de unos 2.500 hogares en una cadena de supermercados.
 #
-# >>> Para agregar un CSV nuevo basta con añadir una línea aquí. <<<
+# La carga la hace dbt, así que para agregar un CSV nuevo hay que:
+#   1. Declararlo en `models/sources.yml`.
+#   2. Crear su modelo en `models/bronze/<tabla>.sql` (copiar uno existente).
+#   3. Añadir aquí su línea, para que la app y la bitácora lo tengan en cuenta.
 SOURCES: tuple[SourceTable, ...] = (
     SourceTable("campaign_desc.csv", "campaign_desc", "Campañas: tipo y días de inicio/fin"),
     SourceTable("campaign_table.csv", "campaign_table", "Hogares que recibieron cada campaña"),
