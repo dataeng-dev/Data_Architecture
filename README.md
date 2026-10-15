@@ -1,22 +1,44 @@
 # 🦆 Arquitectura de Datos: un Lakehouse con DuckLake
 
-> **Curso:** Inteligencia de Negocios · **Para quién:** personas que no son expertas en ingeniería de datos.
-> No necesitas saber programar para seguir esta guía: basta con copiar y pegar algunos comandos.
-
 ---
 
 ## 1. ¿Qué es este proyecto?
 
-Las empresas guardan sus datos en muchos lugares: ventas, clientes, productos, campañas… Antes de
-construir un tablero de BI, alguien tiene que **reunir esos datos, ordenarlos y dejarlos listos para
-analizar**. Ese "alguien" es la **arquitectura de datos**.
+### El caso: los clientes de un supermercado 🛒
 
-Este proyecto es una arquitectura de datos **completa y en miniatura**, que corre en tu computador
-sin servidores ni nube. Con él vas a ver, paso a paso:
+Imagina que trabajas en una cadena nacional de supermercados. Cada vez que un cliente pasa por la
+caja queda un tiquete de compra, y con millones de tiquetes la empresa quiere entender a sus clientes:
+quién compra más, qué compra y si sus campañas de marketing funcionan.
 
-1. Cómo llegan los datos crudos (archivos CSV de un supermercado).
-2. Cómo se guardan de forma ordenada, versionada y auditable.
-3. Cómo se consultan con SQL desde una aplicación web.
+Este proyecto trabaja con datos de esa situación: **The Complete Journey**, un conjunto de datos
+publicado por **dunnhumby**, empresa especializada en ciencia de datos del cliente para el comercio
+minorista. Contiene:
+
+- **Todas las compras de 2.500 hogares** que compran con frecuencia en un mismo minorista, durante
+  **dos años**. No son solo algunas categorías: es la canasta completa. Cada fila equivale a una línea
+  del tiquete de compra.
+- Para **una parte de los hogares**, información **demográfica**: edad, ingresos, vivienda, niños.
+- El **historial de marketing directo**: qué campañas y cupones recibió cada hogar y cuáles usó.
+- Qué productos aparecieron en el **folleto semanal** o en **exhibiciones especiales** dentro de la tienda.
+
+Con estos datos se pueden investigar preguntas como las que propone la guía de usuario de dunnhumby:
+
+- ¿Cuántos clientes **gastan más** con el tiempo? ¿Cuántos **gastan menos**? ¿Cómo son esos clientes?
+- De los que gastan más, ¿qué **categorías crecen** más rápido?
+- De los que gastan menos, ¿de qué categorías se están **alejando**?
+- ¿Qué **factores demográficos** influyen en el gasto o en la preferencia por ciertas categorías?
+- ¿Hay evidencia de que el **marketing directo** aumente el compromiso de los clientes?
+
+### ¿Qué hace este proyecto con esos datos?
+
+Antes de responder cualquiera de esas preguntas en un tablero de BI, alguien tiene que **reunir los
+datos, ordenarlos y dejarlos listos para analizar**. Ese trabajo es la **arquitectura de datos**, y es
+lo que construye este proyecto: una arquitectura **completa y en miniatura**, que corre en tu
+computador sin servidores ni nube. Con él vas a ver, paso a paso:
+
+1. Cómo llegan los datos crudos: los 8 archivos CSV, tal como los entrega dunnhumby.
+2. Cómo se guardan de forma ordenada, versionada y auditable en un *lakehouse*.
+3. Cómo se exploran y consultan desde una aplicación web.
 
 ### La idea en una imagen: la cocina de un restaurante 🍳
 
@@ -78,22 +100,10 @@ marketing y cupones.
 | `coupon_redempt` | Qué cupones usó cada hogar y en qué día. | 2.318 |
 | `causal_data` | Si un producto estuvo en exhibición o en el folleto, por tienda y semana. | 36.786.524 |
 
-### ¿Cómo se relacionan las tablas?
-
-```mermaid
-erDiagram
-  hh_demographic ||--o{ transaction_data : "household_key"
-  product ||--o{ transaction_data : "PRODUCT_ID"
-  product ||--o{ causal_data : "PRODUCT_ID"
-  product ||--o{ coupon : "PRODUCT_ID"
-  campaign_desc ||--o{ campaign_table : "CAMPAIGN"
-  campaign_desc ||--o{ coupon : "CAMPAIGN"
-  hh_demographic ||--o{ campaign_table : "household_key"
-  hh_demographic ||--o{ coupon_redempt : "household_key"
-```
-
-**Preguntas de negocio que se pueden responder:** ¿qué departamentos venden más? ¿Las campañas
-aumentan las compras? ¿Los hogares con niños compran distinto? ¿Qué cupones se usan realmente?
+> 💡 **Un detalle de negocio importante:** según la guía de dunnhumby, `SALES_VALUE` es lo que **recibe
+> el supermercado**, no necesariamente lo que **pagó el cliente**. Si el cliente usó un cupón del
+> fabricante, pagó menos, y el fabricante le reembolsa la diferencia al supermercado. La guía de
+> usuario (*The Complete Journey – User Guide*) describe cada columna en detalle.
 
 ---
 
@@ -202,70 +212,7 @@ uv run main.py info                          # resumen: tablas, tamaño y versio
 
 ---
 
-## 8. Practica: tus primeras consultas SQL
-
-Abre una consola de Python conectada al lakehouse (con el pipeline **sin ejecutarse** en ese momento):
-
-```bash
-uv run python
-```
-
-Y escribe:
-
-```python
-from pipeline.core.lakehouse import get_connection
-con = get_connection()
-con.sql("SELECT * FROM bronze.product LIMIT 5").show()
-```
-
-Cambia el texto entre comillas por cualquiera de estas consultas:
-
-**1. ¿Cuántas transacciones hay?**
-```sql
-SELECT count(*) AS transacciones FROM bronze.transaction_data;
-```
-
-**2. ¿Qué departamentos venden más?** Observa el `CAST`: como en bronce todo es texto, hay que
-convertir `SALES_VALUE` a número para poder sumarlo. ¡Por eso hace falta la capa plata!
-```sql
-SELECT p.DEPARTMENT,
-       round(sum(CAST(t.SALES_VALUE AS DOUBLE)), 2) AS ventas
-FROM bronze.transaction_data t
-JOIN bronze.product p USING (PRODUCT_ID)
-GROUP BY p.DEPARTMENT
-ORDER BY ventas DESC
-LIMIT 10;
-```
-
-**3. ¿Qué cargas se han hecho?**
-```sql
-SELECT * FROM audit.ingestion_log ORDER BY logged_at DESC;
-```
-
-**4. ¿Qué versiones tiene el lakehouse?**
-```sql
-SELECT snapshot_id, snapshot_time FROM ducklake_snapshots('lake') ORDER BY snapshot_id DESC;
-```
-
-**5. Viaje en el tiempo:** la tabla tal como estaba en la versión 8 (usa un número de la consulta anterior).
-```sql
-SELECT count(*) FROM bronze.product AT (VERSION => 8);
-```
-
-**6. Cruzar datos con su carga:** qué corrida trajo las filas de `product`.
-```sql
-SELECT l.batch_id, l.logged_at, count(*) AS filas
-FROM bronze.product p
-JOIN audit.ingestion_log l
-  ON l.batch_id = p._batch_id AND l.table_name = 'product'
-GROUP BY ALL;
-```
-
-Para salir de Python escribe `exit()`.
-
----
-
-## 9. Mapa del proyecto
+## 8. Mapa del proyecto
 
 ```
 Data_Architecture/
@@ -301,7 +248,7 @@ Data_Architecture/
 
 ---
 
-## 10. Problemas frecuentes
+## 9. Problemas frecuentes
 
 | Síntoma | Causa probable | Solución |
 |---|---|---|
@@ -313,7 +260,7 @@ Data_Architecture/
 
 ---
 
-## 11. Próximos pasos (retos para el curso)
+## 10. Próximos pasos (retos para el curso)
 
 1. 🥈 **Capa plata:** convertir los textos a sus tipos reales (`INTEGER`, `DECIMAL`), limpiar valores,
    quitar duplicados y estandarizar los nombres de columnas.
@@ -327,7 +274,9 @@ Data_Architecture/
 <summary>🔧 <b>Anexo técnico: mantenimiento del lakehouse</b> (opcional)</summary>
 
 DuckLake conserva los Parquet de versiones antiguas para permitir el *time travel*. Con el tiempo
-ocupan espacio. Para liberarlo (desde la consola de Python de la sección 8, con `con.sql(...)`):
+ocupan espacio. Para liberarlo, abre una consola de Python con `uv run python` (con el pipeline detenido) y ejecuta
+cada instrucción con `con.sql("...")`, después de `from pipeline.core.lakehouse import get_connection`
+y `con = get_connection()`:
 
 ```sql
 CALL ducklake_expire_snapshots('lake', older_than => now() - INTERVAL 7 DAYS);  -- olvida versiones de más de 7 días
