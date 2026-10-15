@@ -67,6 +67,7 @@ sale mal después, siempre se puede volver a empezar desde ahí.
 | **Parquet** | Formato de archivo para tablas, comprimido y organizado por columnas. Ocupa mucho menos que un CSV y se lee más rápido. |
 | **Metadatos** | "Datos sobre los datos": qué tablas existen, qué columnas tienen, en qué archivos están, qué versiones hay. |
 | **Esquema** | Una "carpeta lógica" que agrupa tablas. Aquí hay uno por nivel: `bronze`, `silver`, `gold` y `audit`. |
+| **SQLite** | Una base de datos completa guardada en **un solo archivo**, sin servidor. La usan los celulares y los navegadores. Aquí guarda el catálogo del lakehouse. |
 | **Snapshot (versión)** | Una "foto" del lakehouse después de cada cambio, como el historial de versiones de un documento en la nube. |
 | **Time travel** | Consultar una tabla *tal como estaba* en una versión anterior. |
 | **Pipeline** | La secuencia de pasos que mueve y transforma los datos, como una línea de ensamblaje. |
@@ -77,6 +78,7 @@ sale mal después, siempre se puede volver a empezar desde ahí.
 |---|---|---|
 | **DuckDB** | El motor que ejecuta las consultas SQL. Muy rápido y no necesita instalar un servidor. | El bibliotecario |
 | **DuckLake** | El formato del lakehouse: guarda los datos en Parquet y los metadatos en un archivo SQLite. | La biblioteca: estantes (Parquet) + fichero (SQLite) |
+| **SQLite** | Guarda el **catálogo** de DuckLake: qué tablas existen, sus columnas, sus versiones y qué archivos Parquet las forman. | El fichero de la biblioteca |
 | **dbt** | Herramienta para definir las transformaciones como archivos SQL ordenados. | El recetario |
 | **Streamlit** | Crea la aplicación web para usar todo desde el navegador. | El mesero que te atiende |
 | **uv** | Instala las librerías de Python exactas que necesita el proyecto. | El que surte la despensa |
@@ -132,6 +134,45 @@ Todo vive en la carpeta `database/`, que se crea sola la primera vez que ejecuta
 | **Estantes (datos)** | `database/lake_data/<esquema>/<tabla>/*.parquet` | Los datos reales, en Parquet |
 
 Las tablas se nombran siempre como **`lake.<esquema>.<tabla>`**, por ejemplo `lake.bronze.product`.
+
+### ¿Para qué usamos SQLite?
+
+Un lakehouse necesita dos cosas: los **datos** y un **catálogo** que diga qué hay y dónde está. En
+este proyecto los datos están en archivos **Parquet** y el catálogo está en **SQLite**, en el archivo
+`database/metadata.sqlite`.
+
+Piensa otra vez en la biblioteca: los Parquet son los **libros en los estantes** y SQLite es el
+**fichero**. El fichero no contiene los libros, pero sin él nadie sabría qué libros hay, en qué
+estante están ni qué edición es la más reciente.
+
+**Qué guarda SQLite (y qué no):**
+
+| Lo que se registra | Tabla dentro de `metadata.sqlite` |
+|---|---|
+| Los esquemas: `bronze`, `silver`, `gold`, `audit` | `ducklake_schema` |
+| Las tablas y sus columnas | `ducklake_table`, `ducklake_column` |
+| El historial de versiones y qué cambió en cada una | `ducklake_snapshot`, `ducklake_snapshot_changes` |
+| Qué archivos Parquet forman cada tabla y desde qué versión hasta cuál son válidos | `ducklake_data_file` |
+| Estadísticas: número de filas y valores mínimos y máximos por columna, para acelerar las consultas | `ducklake_table_stats`, `ducklake_table_column_stats`, `ducklake_file_column_stats` |
+
+**Lo que no guarda son los datos.** El *data inlining* está desactivado, así que todas las filas
+quedan en Parquet. Por eso `metadata.sqlite` pesa alrededor de **1 MB**, mientras los Parquet ocupan
+cientos de MB.
+
+**Así funciona el *time travel*:** cada archivo Parquet registrado en `ducklake_data_file` tiene una
+versión de inicio y una de fin. Para mostrar una tabla "como estaba en la versión 8", DuckLake busca en
+SQLite qué archivos estaban vigentes en esa versión y lee solo esos.
+
+**¿Por qué SQLite?** Es un solo archivo, no hay que instalar ni administrar un servidor y se puede
+copiar como cualquier documento. La desventaja es que **solo admite un escritor a la vez**: por eso la
+app pide no cambiar de pestaña mientras se cargan los datos. En una empresa, el mismo catálogo
+podría vivir en una base de datos con servidor, como PostgreSQL, para que muchas personas escriban
+al mismo tiempo. DuckLake lo permite sin cambiar los Parquet.
+
+> 🔍 **Míralo tú mismo:** con la app detenida, abre `database/metadata.sqlite` con un visor gratuito
+> como [DB Browser for SQLite](https://sqlitebrowser.org/). Busca la tabla `ducklake_snapshot` para
+> ver el historial de versiones, o `ducklake_data_file` para ver los Parquet de cada tabla.
+> **Solo míralo, no lo modifiques:** si cambias algo, el lakehouse puede dañarse.
 
 ### ¿Qué pasa cuando presiono "Iniciar Ejecución"?
 
