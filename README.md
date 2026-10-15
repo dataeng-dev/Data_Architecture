@@ -301,13 +301,132 @@ Data_Architecture/
 
 ---
 
-## 10. Próximos pasos (retos para el curso)
+## 10. Actividad: completar las capas plata y oro
 
-1. 🥈 **Capa plata:** convertir los textos a sus tipos reales (`INTEGER`, `DECIMAL`), limpiar valores,
-   quitar duplicados y estandarizar los nombres de columnas.
-2. 🥇 **Capa oro:** construir un **modelo dimensional** (tablas de hechos y dimensiones, por ejemplo
-   `fact_ventas`, `dim_producto`, `dim_hogar`) listo para conectar a Power BI o Tableau.
-3. Registrar ambas capas en el orquestador (`LAYERS` en `pipeline/orchestrator.py`).
+> **Modalidad:** individual o en grupo, según indique el docente · **Fecha de entrega:** _por definir_
+
+### Contexto
+
+El supermercado quiere responder las preguntas de negocio de la sección 1: quién gasta más o menos con
+el tiempo, qué categorías crecen y si el marketing directo funciona. Para eso, el equipo de BI
+construirá más adelante un **modelo semántico** (medidas, relaciones e indicadores en una herramienta
+como Power BI) y sus tableros.
+
+Ese modelo semántico solo es posible si existe una base confiable. **Tu tarea es construir esa base:**
+completar la arquitectura medallón hasta la **capa oro**, partiendo de la capa bronce que ya existe.
+
+```mermaid
+flowchart LR
+  B["🥉 bronze<br/>(ya existe)"] --> S["🥈 silver<br/>(tu trabajo)"] --> G["🥇 gold<br/>(tu trabajo)"] -.-> SM["📊 modelo semántico<br/>(siguiente actividad)"]
+```
+
+### Alcance
+
+| ✅ Dentro del alcance | ❌ Fuera del alcance (siguiente actividad) |
+|---|---|
+| Capa plata: limpieza, tipos, nombres y calidad | Medidas e indicadores (DAX, métricas calculadas) |
+| Capa oro: modelo dimensional (hechos y dimensiones) | Relaciones y jerarquías dentro de la herramienta de BI |
+| Integración con el pipeline y la app | Tableros y visualizaciones |
+| Documentación del modelo | Seguridad y publicación |
+
+### Parte 1 · Capa plata 🥈: datos limpios y confiables
+
+Crea un modelo dbt por cada tabla de bronce en `models/silver/`, leyendo bronce con `{{ ref('...') }}`.
+Cada modelo de plata debe:
+
+1. **Tipar** cada columna: números enteros, decimales y textos donde corresponda. Ningún campo numérico
+   puede quedar como texto.
+2. **Estandarizar nombres** de columnas con un mismo criterio para todo el proyecto (por ejemplo, en
+   español y en minúsculas: `household_key` → `id_hogar`, `SALES_VALUE` → `valor_venta`).
+3. **Limpiar** valores: espacios sobrantes, textos vacíos y valores como `None/Unknown` o `Unknown`,
+   tratados con una regla única y documentada.
+4. **Eliminar duplicados** cuando existan, y documentar cómo los detectaste.
+5. **Conservar la trazabilidad:** mantener `_batch_id` y `_ingested_at` de bronce.
+
+Algunos hallazgos reales que tu capa plata debe resolver o, al menos, documentar:
+
+| Tabla | Hallazgo |
+|---|---|
+| `coupon` | Tiene **5.164 filas repetidas** exactamente iguales. |
+| `transaction_data` | **14.466 filas** tienen `QUANTITY = 0` y **18.850** tienen `SALES_VALUE` menor o igual a 0. ¿Son errores, devoluciones u otra cosa? Decide y justifica qué hacer con ellas. |
+| `product` | **30.607 productos** no tienen tamaño (`CURR_SIZE_OF_PRODUCT`) y **15** no tienen departamento. |
+| `hh_demographic` | Las categorías vienen como texto ordinal (`Level1` … `Level12`). Ordenadas como texto, `Level10` queda antes que `Level2`: conserva el **orden lógico**. |
+| `hh_demographic` | Solo **801 de los 2.500 hogares** tienen información demográfica. |
+| `causal_data` | Las columnas `display` y `mailer` traen **códigos** (`0`, `3`, `A`, `D`…) que un usuario de negocio no entiende. Su significado está en la guía de dunnhumby (ej. `display = 3` → *Front End Cap*, `mailer = D` → *Front page feature*). Es además la tabla más grande: **36,8 millones de filas**. |
+
+**Pruebas de calidad (obligatorias):** define pruebas en dbt (`tests` en un archivo `.yml`) que
+verifiquen como mínimo que:
+- las claves no son nulas y son únicas donde deben serlo (por ejemplo, `id_producto` en productos);
+- toda transacción apunta a un producto que existe (`relationships`).
+
+### Parte 2 · Capa oro 🥇: el modelo dimensional
+
+Construye en `models/gold/` un **modelo estrella** que un analista pueda conectar directamente a una
+herramienta de BI. Como mínimo:
+
+| Tabla | Granularidad: ¿qué representa una fila? | Contenido mínimo |
+|---|---|---|
+| `fact_ventas` | Un producto dentro de una canasta (una línea del tiquete) | Claves de hogar, producto, tienda y tiempo; cantidad; valor de venta; descuentos; **precio pagado por unidad** |
+| `dim_producto` | Un producto | Departamento, categoría, subcategoría, marca, fabricante, tamaño |
+| `dim_hogar` | Un hogar | Atributos demográficos. **Debe incluir los 2.500 hogares**; los que no tienen demografía llevan un valor como `Sin información` |
+| `dim_tiempo` | Un día (1 a 711) | Día, semana y los atributos derivados que consideres útiles (por ejemplo, mes aproximado o trimestre) |
+| `dim_tienda` | Una tienda | Identificador de la tienda |
+| `dim_campana` | Una campaña | Tipo de campaña, día de inicio, día de fin y duración |
+| `fact_exhibicion_promocional` | Un producto en una tienda en una semana (origen: `causal_data`) | Claves de producto, tienda y semana; claves de tipo de exhibición y de ubicación en el folleto |
+| `dim_exhibicion` | Un tipo de exhibición en tienda | Código y descripción legible (ej. `3` → *Front End Cap*, `0` → *Not on Display*) |
+| `dim_folleto` | Una ubicación en el folleto semanal | Código y descripción legible (ej. `D` → *Front page feature*, `0` → *Not on ad*) |
+
+**Sobre `causal_data`:** registra qué productos estuvieron en una exhibición especial dentro de la
+tienda o en el folleto semanal. Sus códigos se convierten en **dimensiones** (`dim_exhibicion`,
+`dim_folleto`) y la tabla misma es un **hecho** que permite analizar si la promoción en tienda impulsa
+las ventas. Ten en cuenta dos cosas:
+- Su granularidad es **semanal**, mientras que la de `fact_ventas` es **diaria**. Decide y documenta cómo se
+  relaciona con el tiempo (por ejemplo, con la columna `semana` de `dim_tiempo` o con una `dim_semana`).
+- Con 36,8 millones de filas, prueba tus consultas primero con un filtro (por ejemplo, unas pocas
+  semanas) antes de procesar la tabla completa.
+
+Además, elige **al menos una** tabla de hechos adicional relacionada con marketing directo, por ejemplo
+`fact_campanas_recibidas` (hogar × campaña) o `fact_redenciones` (hogar × cupón × día).
+
+**El precio pagado por unidad** se calcula con las fórmulas de la guía de dunnhumby. Los descuentos
+vienen como números **negativos**:
+- Con tarjeta de lealtad: `(valor_venta − (descuento_minorista + descuento_coincidencia_cupon)) / cantidad`
+- Sin tarjeta de lealtad: `(valor_venta − descuento_coincidencia_cupon) / cantidad`
+
+Ojo: hay filas con `cantidad = 0`. Decide cómo evitar la división por cero.
+
+**Para que el modelo semántico se pueda construir después, la capa oro debe cumplir:**
+1. Cada tabla de hechos tiene una **granularidad documentada** y no tiene duplicados a esa granularidad.
+2. **Integridad referencial:** toda clave de un hecho existe en su dimensión. No hay "huérfanos".
+3. Las medidas son **numéricas** y **aditivas** cuando corresponde.
+4. Las dimensiones tienen **nombres de columnas claros para un usuario de negocio**.
+5. **Conciliación:** el total de `valor_venta` en oro coincide con el de bronce. Si filtraste filas en
+   plata, explica la diferencia exacta.
+
+### Parte 3 · Integración con el pipeline ⚙️
+
+1. Crea `pipeline/layers/silver.py` y `pipeline/layers/gold.py` tomando como ejemplo `bronze.py`.
+2. Regístralas en `LAYERS` de `pipeline/orchestrator.py`, en orden: bronce → plata → oro.
+3. Verifica que `uv run main.py run` ejecute las tres capas y que la app muestre las nuevas tablas en
+   el **Explorador** y sus cargas en el **Historial**.
+
+> 💡 **Pistas técnicas**
+> - En dbt, **cada modelo necesita un nombre único** en todo el proyecto. Usa prefijos
+>   (`slv_product`) y, si quieres que la tabla se llame distinto en el lakehouse, usa `alias` en el
+>   `config(...)`.
+> - Configura cada modelo con `database='lake'` y `schema='silver'` o `schema='gold'`, igual que en bronce.
+> - Prueba primero con tablas pequeñas: `uv run main.py run --tables campaign_desc`.
+> - Para ejecutar solo una capa con dbt: `PYTHONPATH=. uv run dbt build --select silver --profiles-dir .`
+>   (`build` ejecuta los modelos y sus pruebas).
+
+### Entregables
+
+1. **El repositorio** con los modelos de plata y oro, las pruebas y las capas registradas en el pipeline.
+2. **Un documento en word** (máximo 5 páginas) con:
+   - un **diccionario de datos** de la capa oro: tabla, columna, tipo, descripción y origen;
+   - las **decisiones de limpieza** y su justificación (incluidos los hallazgos de la Parte 1);
+   - la **evidencia de conciliación** (consultas y resultados) y de que las pruebas pasan.
+3. **La aplicación funcionando** mostrando las tablas de plata y oro en el Explorador y la bitácora en el Historial.
 
 ---
 
