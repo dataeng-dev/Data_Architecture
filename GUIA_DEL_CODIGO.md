@@ -146,7 +146,8 @@ salen las demás:
 | `DATA_DIR` | `<raíz>/data` | CSV de origen |
 | `DATABASE_DIR` | `<raíz>/database` | Todo el lakehouse |
 | `CATALOG_PATH` | `<raíz>/database/metadata.sqlite` | Catálogo SQLite de DuckLake |
-| `LAKE_DATA_PATH` | `<raíz>/database/lake_data` | Archivos Parquet |
+| `LAKE_DATA_PATH` | `<raíz>/database/lake_data` | Archivos Parquet del lakehouse |
+| `POWERBI_EXPORT_PATH` | `<raíz>/database/powerbi_gold` | Parquet limpios de la capa `gold` listos para Power BI |
 
 ### 3.2 Parámetros de DuckLake
 
@@ -614,6 +615,9 @@ eso la carpeta crece (ver la limpieza en el anexo del README).
 | `ingestion_log(limit)` | `SELECT … FROM lake.audit.ingestion_log ORDER BY logged_at DESC`. Si la tabla no existe, devuelve un DataFrame vacío | Historial |
 | `table_columns(schema, table)` | `information_schema.columns` filtrado por catálogo, esquema y tabla | Explorador |
 | `preview_table(schema, table, version, limit)` | `SELECT * FROM lake.<esq>.<tabla> [AT (VERSION => n)] LIMIT n` | Explorador |
+| `export_gold_to_powerbi()` | Consulta `information_schema.tables` para `lake.gold` y ejecuta `COPY (SELECT * FROM lake.gold.<tabla>) TO '…/powerbi_gold/<tabla>.parquet'` | Ejecución (sección Power BI) |
+| `build_powerbi_gold_zip()` | Empaqueta en memoria todos los `.parquet` de `database/powerbi_gold/` en un archivo `.zip` | Ejecución (botón de descarga ZIP) |
+| `powerbi_m_script()` | Genera el script Power Query (M) con `Folder.Files` y `Parquet.Document` apuntando a `POWERBI_EXPORT_PATH` | Ejecución (desplegable Power Query) |
 
 Las columnas se renombran en el SQL (`AS Esquema`, `AS "Tamaño (MB)"`…) para que lleguen a la
 pantalla con nombres en español.
@@ -717,6 +721,11 @@ Puntos clave:
   100 % se marca al terminar.
 - **`try/except/finally`:** `except` muestra errores graves, por ejemplo una capa inexistente.
   `finally` **siempre** libera el candado `is_running`.
+- **Sección Power BI (`render_powerbi_section`):** debajo del botón de ejecución se muestra la tarjeta
+  **📊 Conectar capa Gold a Power BI**. Al pulsar el botón, llama a `catalog.export_gold_to_powerbi()`,
+  guarda el DataFrame resultante en `st.session_state.powerbi_export_df` (para que no desaparezca al
+  hacer clic en `st.download_button`) y presenta la ruta local `database/powerbi_gold`, el botón para
+  descargar `powerbi_gold_parquet.zip` y el script Power Query (M).
 
 ### 12.4 Pestaña Explorador: `view_catalog()` (`app.py:165`)
 
@@ -795,7 +804,8 @@ Por dos motivos:
 | Ruta | Quién la crea | Contenido |
 |---|---|---|
 | `database/metadata.sqlite` | DuckLake, en el primer `ATTACH` | Catálogo (metadatos, versiones, estadísticas) |
-| `database/lake_data/<esquema>/<tabla>/*.parquet` | DuckLake, al escribir | Datos |
+| `database/lake_data/<esquema>/<tabla>/*.parquet` | DuckLake, al escribir | Datos (incluye versiones históricas y carpetas `__dbt_tmp`) |
+| `database/powerbi_gold/<tabla>.parquet` | `catalog.export_gold_to_powerbi()`, desde la app | Un archivo Parquet limpio por tabla de la capa `gold` (solo versión vigente) para Power BI |
 | `target/` | dbt | SQL compilado, `run_results.json`, `manifest.json` |
 | `logs/dbt.log` | dbt | Registro detallado de cada ejecución de dbt |
 | `.venv/` | `uv sync` | Entorno de Python con las librerías |

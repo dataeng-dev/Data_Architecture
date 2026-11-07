@@ -116,6 +116,7 @@ flowchart LR
   CSV["📄 Archivos CSV<br/>(carpeta data/)"] -->|"dbt copia todo<br/>como texto"| B["🥉 bronze"]
   B -.->|"pendiente"| S["🥈 silver"]
   S -.->|"pendiente"| G["🥇 gold"]
+  G -.->|"exportación limpia"| BI["📊 powerbi_gold/<br/>Parquet para Power BI"]
   subgraph DuckLake["🦆 Lakehouse DuckLake (se consulta como 'lake')"]
     B
     S
@@ -131,7 +132,8 @@ Todo vive en la carpeta `database/`, que se crea sola la primera vez que ejecuta
 | Pieza | Dónde está | Qué guarda |
 |---|---|---|
 | **Fichero (catálogo)** | `database/metadata.sqlite` | Solo metadatos: tablas, columnas, versiones y archivos |
-| **Estantes (datos)** | `database/lake_data/<esquema>/<tabla>/*.parquet` | Los datos reales, en Parquet |
+| **Estantes (datos)** | `database/lake_data/<esquema>/<tabla>/*.parquet` | Los datos reales del lakehouse, en Parquet (incluye el historial de versiones) |
+| **Publicación para BI** | `database/powerbi_gold/<tabla>.parquet` | Un archivo Parquet limpio por cada tabla de `gold` (solo la versión vigente), listo para Power BI |
 
 Las tablas se nombran siempre como **`lake.<esquema>.<tabla>`**, por ejemplo `lake.bronze.product`.
 
@@ -224,12 +226,23 @@ presiona `Ctrl + C`.
 
 | Pestaña | Para qué sirve | Qué te invitamos a observar |
 |---|---|---|
-| ▶️ **Ejecución** | Cargar los datos. Elige la capa (`all` o `bronze`) y, si quieres, solo algunas tablas (ej. `product coupon`). Luego presiona **Iniciar Ejecución**. | Cuánto tarda cada tabla y cuántas filas carga. ¿Por qué `causal_data` tarda más? |
+| ▶️ **Ejecución** | Cargar los datos (elige la capa y, si quieres, solo algunas tablas y presiona **Iniciar Ejecución**) y **publicar la capa oro para Power BI**. | Cuánto tarda cada tabla y cuántas filas carga. ¿Por qué `causal_data` tarda más? |
 | 🔎 **Explorador** | Ver qué tablas existen, sus columnas y una muestra de los datos. | Todas las columnas son texto (`VARCHAR`). Con **Viaje en el tiempo**, mira cómo estaba una tabla en una versión anterior. |
 | 🕰️ **Historial** | Revisar la bitácora de cargas y las versiones del lakehouse. | Cada carga deja rastro: cuándo, cuántas filas y si hubo errores. Es la base de la **gobernanza de datos**. |
 
 > ⚠️ Mientras se ejecuta el pipeline, espera a que termine antes de cambiar de pestaña: la base de
 > datos está ocupada escribiendo.
+
+### 📊 ¿Cómo conectar la capa oro con Power BI?
+
+En la parte inferior de la pestaña **▶️ Ejecución** encontrarás la sección **📊 Conectar capa Gold a Power BI**:
+
+- **¿Por qué no apuntar Power BI directo a `database/lake_data/gold/`?** Porque dentro de `lake_data/` DuckLake guarda los archivos Parquet de **todas las versiones históricas** (para que funcione el *time travel*) junto con carpetas temporales de dbt (`*__dbt_tmp`). Si Power BI leyera esa carpeta directamente, mezclaría versiones antiguas y archivos temporales.
+- **¿Qué hace el botón "Conectar capa Gold a Power BI"?** Consulta el catálogo de DuckLake (`lake.gold`) para resolver cuál es la **versión vigente** de cada tabla y exporta un único archivo limpio `<tabla>.parquet` por tabla en la carpeta `database/powerbi_gold/` (ignorando tablas temporales y eliminando archivos de tablas que ya no existan).
+- **¿Cómo se carga luego en Power BI Desktop?** Una vez exportada la capa oro, la aplicación te entrega tres opciones listas para usar:
+  1. **Ruta local de la carpeta** (`database/powerbi_gold`): para conectarte desde *Power BI Desktop → Obtener datos → Carpeta* (o *Parquet*).
+  2. **Botón "Descargar paquete Gold (`.zip`)"**: descarga `powerbi_gold_parquet.zip` con todos los `.parquet` vigentes, ideal si tienes Power BI instalado en otro computador.
+  3. **Script Power Query (M) listo para pegar**: en el desplegable inferior puedes copiar el código M generado con la ruta exacta de tu proyecto y pegarlo en *Power BI Desktop → Obtener datos → Consulta en blanco → Editor avanzado* para importar todas las tablas de oro de una sola vez.
 
 ### ¿Prefieres la terminal?
 
@@ -409,6 +422,7 @@ Ojo: hay filas con `cantidad = 0`. Decide cómo evitar la división por cero.
 2. Regístralas en `LAYERS` de `pipeline/orchestrator.py`, en orden: bronce → plata → oro.
 3. Verifica que `uv run main.py run` ejecute las tres capas y que la app muestre las nuevas tablas en
    el **Explorador** y sus cargas en el **Historial**.
+4. En la pestaña **Ejecución**, usa el botón **Conectar capa Gold a Power BI** para exportar las tablas de `lake.gold` como archivos Parquet limpios en `database/powerbi_gold/` y dejarlas listas para el modelo semántico.
 
 > 💡 **Pistas técnicas**
 > - En dbt, **cada modelo necesita un nombre único** en todo el proyecto. Usa prefijos
