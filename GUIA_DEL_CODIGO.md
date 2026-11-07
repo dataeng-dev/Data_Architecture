@@ -53,24 +53,24 @@ coordinación, el trabajo de las capas y el almacenamiento.
 ```mermaid
 flowchart TB
   subgraph E["1 · Puertas de entrada"]
-    APP["app.py<br/>(Streamlit)"]
-    CLI["main.py<br/>(terminal)"]
+    APP["app.py (Streamlit)"]
+    CLI["main.py (terminal)"]
   end
   subgraph C["2 · Coordinación"]
-    ORQ["orchestrator.py<br/>Pipeline + LAYERS"]
-    CAT["core/catalog.py<br/>consultas de información"]
+    ORQ["orchestrator.py · Pipeline + LAYERS"]
+    CAT["core/catalog.py · consultas de información"]
   end
   subgraph L["3 · Trabajo"]
-    BR["layers/bronze.py<br/>BronzeLayer"]
-    DBT["dbt<br/>(proceso aparte)"]
+    BR["layers/bronze.py · BronzeLayer"]
+    DBT["dbt (proceso aparte)"]
     MOD["models/bronze/*.sql"]
   end
   subgraph S["4 · Almacenamiento (DuckLake)"]
-    SQ[("database/metadata.sqlite<br/>catálogo")]
-    PQ[("database/lake_data/<br/>Parquet")]
+    SQ[("database/metadata.sqlite · catálogo")]
+    PQ[("database/lake_data/ · Parquet")]
   end
-  CONF["config/settings.py<br/>(rutas y constantes)"]
-  CON["core/lakehouse.py<br/>get_connection()"]
+  CONF["config/settings.py (rutas y constantes)"]
+  CON["core/lakehouse.py · get_connection()"]
 
   APP --> ORQ
   APP --> CAT
@@ -101,22 +101,22 @@ Ambos apuntan al mismo catálogo SQLite y a la misma carpeta de Parquet, con las
 
 ```mermaid
 flowchart LR
-  app.py --> orchestrator.py
-  app.py --> catalog.py
-  app.py --> base.py
-  app.py --> settings.py
-  main.py --> orchestrator.py
-  main.py --> catalog.py
-  main.py --> settings.py
-  orchestrator.py --> base.py
-  orchestrator.py --> lakehouse.py
-  orchestrator.py --> bronze.py
-  bronze.py --> base.py
-  bronze.py --> settings.py
-  catalog.py --> lakehouse.py
-  catalog.py --> settings.py
-  lakehouse.py --> settings.py
-  dbt_plugin.py --> settings.py
+  app["app.py"] --> orchestrator["orchestrator.py"]
+  app --> catalog["catalog.py"]
+  app --> base["base.py"]
+  app --> settings["settings.py"]
+  main["main.py"] --> orchestrator
+  main --> catalog
+  main --> settings
+  orchestrator --> base
+  orchestrator --> lakehouse["lakehouse.py"]
+  orchestrator --> bronze["bronze.py"]
+  bronze --> base
+  bronze --> settings
+  catalog --> lakehouse
+  catalog --> settings
+  lakehouse --> settings
+  dbt_plugin["dbt_plugin.py"] --> settings
 ```
 
 `settings.py` no importa nada del proyecto: es la base de todo.
@@ -197,9 +197,9 @@ en dos lugares:
 
 ```mermaid
 flowchart TD
-  A["1. mkdir database/ y database/lake_data/<br/>(si no existen)"] --> B["2. duckdb.connect()<br/>DuckDB en memoria"]
+  A["1. mkdir database/ y database/lake_data/ (si no existen)"] --> B["2. duckdb.connect() · DuckDB en memoria"]
   B --> C["3. INSTALL + LOAD ducklake y sqlite"]
-  C --> D["4. ATTACH 'ducklake:sqlite:…/metadata.sqlite' AS lake<br/>(DATA_PATH …/lake_data/, DATA_INLINING_ROW_LIMIT 0)"]
+  C --> D["4. ATTACH ducklake:sqlite:…/metadata.sqlite AS lake (DATA_PATH …/lake_data/, DATA_INLINING_ROW_LIMIT 0)"]
   D --> E["5. USE lake"]
   E --> F["6. ensure_schemas(): crea bronze/silver/gold/audit si faltan"]
   F --> G["devuelve la conexión"]
@@ -369,16 +369,16 @@ SQL de carga**: es un **puente** que ejecuta dbt, interpreta su resultado y lo a
 
 ```mermaid
 flowchart TD
-  A["_ensure_ingestion_log(con)<br/>CREATE TABLE IF NOT EXISTS lake.audit.ingestion_log"] --> B["Armar comando dbt"]
+  A["_ensure_ingestion_log(con) · CREATE TABLE IF NOT EXISTS lake.audit.ingestion_log"] --> B["Armar comando dbt"]
   B --> C["on_start(…)"]
-  C --> D["Borrar target/run_results.json<br/>(si existe)"]
-  D --> E["subprocess.run(cmd)<br/>con PYTHONPATH = raíz del proyecto"]
+  C --> D["Borrar target/run_results.json (si existe)"]
+  D --> E["subprocess.run(cmd) · PYTHONPATH = raíz del proyecto"]
   E --> F{"¿Existe run_results.json?"}
-  F -- "No: dbt no ejecutó nada" --> G["Una ficha FAILED por tabla<br/>con el mensaje de dbt"]
+  F -- "No: dbt no ejecutó nada" --> G["Una ficha FAILED por tabla con el mensaje de dbt"]
   F -- "Sí" --> H["Por cada resultado de dbt:"]
-  H --> I["status success → SUCCESS<br/>otro → FAILED + mensaje"]
+  H --> I["status success → SUCCESS · otro → FAILED + mensaje"]
   I --> J{"¿SUCCESS?"}
-  J -- "Sí" --> K["SELECT count(*) FROM lake.bronze.&lt;tabla&gt;"]
+  J -- "Sí" --> K["SELECT count(*) FROM lake.bronze.tabla"]
   J -- "No" --> L
   K --> L["INSERT en ingestion_log"]
   L --> M["on_step(ficha)"]
@@ -667,9 +667,9 @@ Consecuencias:
 
 ```mermaid
 flowchart TD
-  A["initialize_session_state()<br/>is_running = False (solo la 1.ª vez)"] --> B["render_sidebar()<br/>título, radio de navegación, pie"]
-  B --> C{"¿is_running y la página<br/>no es Ejecución?"}
-  C -- "Sí" --> D["Aviso: el pipeline se está ejecutando<br/>(no consulta el catálogo)"]
+  A["initialize_session_state() · is_running = False (solo la 1.ª vez)"] --> B["render_sidebar() · título, radio de navegación, pie"]
+  B --> C{"¿is_running y la página no es Ejecución?"}
+  C -- "Sí" --> D["Aviso: el pipeline se está ejecutando (no consulta el catálogo)"]
   C -- "No" --> E{"Página elegida"}
   E --> F["view_run_pipeline()"]
   E --> G["view_catalog()"]

@@ -113,18 +113,18 @@ marketing y cupones.
 
 ```mermaid
 flowchart LR
-  CSV["📄 Archivos CSV<br/>(carpeta data/)"] -->|"dbt copia todo<br/>como texto"| B["🥉 bronze"]
+  CSV["📄 Archivos CSV (carpeta data/)"] -->|"dbt copia todo como texto"| B["🥉 bronze"]
   B -.->|"pendiente"| S["🥈 silver"]
   S -.->|"pendiente"| G["🥇 gold"]
-  G -.->|"exportación limpia"| BI["📊 powerbi_gold/<br/>Parquet para Power BI"]
+  G -.->|"exportación limpia"| BI["📊 powerbi_gold/ (Parquet para Power BI)"]
   subgraph DuckLake["🦆 Lakehouse DuckLake (se consulta como 'lake')"]
     B
     S
     G
-    A["📒 audit.ingestion_log<br/>(bitácora de cargas)"]
+    A["📒 audit.ingestion_log (bitácora de cargas)"]
   end
-  DuckLake --- M[("🗂️ metadata.sqlite<br/>el fichero: metadatos")]
-  DuckLake --- P[("📚 lake_data/<br/>los estantes: Parquet")]
+  DuckLake --- M[("🗂️ metadata.sqlite · el fichero: metadatos")]
+  DuckLake --- P[("📚 lake_data/ · los estantes: Parquet")]
 ```
 
 Todo vive en la carpeta `database/`, que se crea sola la primera vez que ejecutas el pipeline:
@@ -330,7 +330,9 @@ completar la arquitectura medallón hasta la **capa oro**, partiendo de la capa 
 
 ```mermaid
 flowchart LR
-  B["🥉 bronze<br/>(ya existe)"] --> S["🥈 silver<br/>(tu trabajo)"] --> G["🥇 gold<br/>(tu trabajo)"] -.-> SM["📊 modelo semántico<br/>(siguiente actividad)"]
+  B["🥉 bronze (ya existe)"] --> S["🥈 silver (tu trabajo)"]
+  S --> G["🥇 gold (tu trabajo)"]
+  G -.-> SM["📊 modelo semántico (siguiente actividad)"]
 ```
 
 ### Alcance
