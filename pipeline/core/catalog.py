@@ -13,11 +13,14 @@ tablas existen, qué versiones hay y qué se ha cargado.
 
 from __future__ import annotations
 
+import io
+import zipfile
+
 import duckdb
 import pandas as pd
 
 from pipeline.config import settings
-from pipeline.core.lakehouse import get_connection
+from pipeline.core.lakehouse import _sql_str, get_connection
 
 CAT = settings.CATALOG_NAME
 
@@ -113,3 +116,92 @@ def preview_table(schema: str, table: str, version: int | None = None, limit: in
 
     with get_connection() as con:
         return con.sql(query).df()
+
+
+def export_gold_to_powerbi() -> pd.DataFrame:
+    """Materializa cada tabla de la capa Gold como un único archivo Parquet limpio.
+
+    ¿Por qué no apuntar Power BI directo a `database/lake_data/gold`?
+    Porque DuckLake guarda allí múltiples archivos históricos (snapshots) y
+    tablas temporales de dbt (`*__dbt_tmp`). Al exportar desde `lake.gold`,
+    DuckDB resuelve el catálogo y entrega exactamente la versión vigente de
+    cada tabla en un archivo `<tabla>.parquet` listo para Power BI.
+    """
+    export_dir = settings.POWERBI_EXPORT_PATH
+    schema_gold = settings.SCHEMA_GOLD
+
+    with get_connection() as con:
+        rows = con.execute(
+            """
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_catalog = ?
+              AND table_schema = ?
+            ORDER BY table_name
+            """,
+            [CAT, schema_gold],
+        ).fetchall()
+
+        tables = [r[0] for r in rows if not r[0].endswith("__dbt_tmp")]
+        if not tables:
+            return pd.DataFrame()
+
+        export_dir.mkdir(parents=True, exist_ok=True)
+
+        # Limpiar archivos .parquet antiguos de tablas que ya no existan
+        expected_files = {f"{t}.parquet" for t in tables}
+        for existing_file in export_dir.glob("*.parquet"):
+            if existing_file.name not in expected_files:
+                existing_file.unlink()
+
+        summary: list[dict[str, object]] = []
+        for table_name in tables:
+            out_file = export_dir / f"{table_name}.parquet"
+            con.execute(
+                f"COPY (SELECT * FROM {CAT}.{schema_gold}.{table_name}) "
+                f"TO {_sql_str(out_file)} (FORMAT PARQUET)"
+            )
+            row_count = con.execute(
+                f"SELECT count(*) FROM {CAT}.{schema_gold}.{table_name}"
+            ).fetchone()[0]
+            size_kb = round(out_file.stat().st_size / 1024, 2)
+            summary.append(
+                {
+                    "Tabla": table_name,
+                    "Filas": row_count,
+                    "Tamaño (KB)": size_kb,
+                    "Archivo": str(out_file),
+                }
+            )
+
+        return pd.DataFrame(summary)
+
+
+def build_powerbi_gold_zip() -> bytes:
+    """Empaqueta los archivos `.parquet` de la capa Gold en un ZIP en memoria."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for parquet_file in sorted(settings.POWERBI_EXPORT_PATH.glob("*.parquet")):
+            zf.write(parquet_file, arcname=parquet_file.name)
+    return buffer.getvalue()
+
+
+def powerbi_m_script(folder_path: str | None = None) -> str:
+    """Genera un script Power Query (M) para cargar las tablas Parquet en Power BI."""
+    target_path = folder_path or str(settings.POWERBI_EXPORT_PATH)
+    escaped_path = target_path.replace('"', '""')
+    return (
+        "let\n"
+        f'    RutaCarpeta = "{escaped_path}",\n'
+        "    Archivos = Folder.Files(RutaCarpeta),\n"
+        '    SoloParquet = Table.SelectRows(Archivos, each Text.Lower([Extension]) = ".parquet"),\n'
+        "    Tablas = Table.AddColumn(\n"
+        "        SoloParquet,\n"
+        '        "Datos",\n'
+        "        each Parquet.Document(File.Contents([Folder Path] & [Name]))\n"
+        "    ),\n"
+        "    Resultado = Table.SelectColumns(Tablas, {\"Name\", \"Datos\"})\n"
+        "in\n"
+        "    Resultado"
+    )
+

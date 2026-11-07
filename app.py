@@ -42,6 +42,10 @@ def initialize_session_state():
         # Candado: True significa que el pipeline se está ejecutando,
         # así evitamos que el usuario haga múltiples clics.
         st.session_state.is_running = False
+    if "powerbi_export_df" not in st.session_state:
+        # Guarda el resultado de la última exportación a Power BI para que
+        # persista cuando el usuario descargue el archivo ZIP.
+        st.session_state.powerbi_export_df = None
 
 def render_sidebar() -> str:
     """Dibuja el menú lateral y devuelve el nombre de la página seleccionada."""
@@ -161,6 +165,65 @@ def view_run_pipeline():
             if st.button("Volver a iniciar"):
                 st.rerun()
 
+    st.divider()
+    render_powerbi_section()
+
+
+def render_powerbi_section():
+    """Sección para publicar la capa Gold y conectarla con Power BI."""
+    with st.container(border=True):
+        st.subheader("📊 Conectar capa Gold a Power BI")
+        st.markdown(
+            "Exporta la versión vigente de las tablas de `lake.gold` como archivos "
+            "Parquet limpios (sin archivos temporales ni versiones antiguas) listos "
+            "para cargar en Power BI Desktop."
+        )
+
+        if st.button(
+            "Conectar capa Gold a Power BI",
+            icon=":material/analytics:",
+            disabled=st.session_state.is_running,
+        ):
+            with st.spinner("Exportando tablas de la capa Gold para Power BI..."):
+                try:
+                    st.session_state.powerbi_export_df = catalog.export_gold_to_powerbi()
+                except Exception as e:
+                    st.error(f"Error al exportar la capa Gold: {e}")
+                    return
+
+        df_export = st.session_state.powerbi_export_df
+        if df_export is None:
+            return
+
+        if df_export.empty:
+            st.warning(
+                "⚠️ Aún no existen tablas en el esquema **gold** (`lake.gold`). "
+                "Crea tus modelos en `models/gold/`, registra la capa en el "
+                "orquestador y ejecuta el pipeline primero."
+            )
+            return
+
+        st.success(f"✅ {len(df_export)} tabla(s) de la capa Gold listas para Power BI.")
+        st.dataframe(df_export, width="stretch", hide_index=True)
+
+        st.markdown("**1. Ruta local de la carpeta (Power BI Desktop → Obtener datos → Carpeta / Parquet):**")
+        st.code(str(settings.POWERBI_EXPORT_PATH), language="text")
+
+        st.download_button(
+            label="Descargar paquete Gold (.zip)",
+            data=catalog.build_powerbi_gold_zip(),
+            file_name="powerbi_gold_parquet.zip",
+            mime="application/zip",
+            icon=":material/download:",
+        )
+
+        with st.expander("Ver script Power Query (M) para carga directa en Power BI"):
+            st.markdown(
+                "En Power BI Desktop ve a **Obtener datos → Consulta en blanco → "
+                "Editor avanzado** y pega el siguiente código:"
+            )
+            st.code(catalog.powerbi_m_script(), language="powerquery")
+
 
 def view_catalog():
     """Pestaña 2: Explorador. Muestra las tablas y permite ver sus datos."""
@@ -178,7 +241,7 @@ def view_catalog():
         return
 
     # Muestra el resumen de tablas
-    st.dataframe(df_tables, use_container_width=True, hide_index=True)
+    st.dataframe(df_tables, width="stretch", hide_index=True)
 
     st.markdown("---")
     st.subheader("Vista Previa de Datos")
@@ -224,7 +287,7 @@ def view_catalog():
                 
                 df_preview = catalog.preview_table(schema_sel, table_sel, version=version_id, limit=50)
                 st.write("**Muestra (hasta 50 filas):**")
-                st.dataframe(df_preview, use_container_width=True)
+                st.dataframe(df_preview, width="stretch")
             except Exception as e:
                 st.error(f"Error al leer la tabla: {e}")
 
@@ -253,7 +316,7 @@ def view_history():
                 
                 st.dataframe(
                     df_log.style.map(color_status, subset=['Estado']),
-                    use_container_width=True, 
+                    width="stretch", 
                     hide_index=True
                 )
         except Exception as e:
@@ -268,7 +331,7 @@ def view_history():
             else:
                  if "Fecha" in df_snaps.columns:
                     df_snaps["Fecha"] = pd.to_datetime(df_snaps["Fecha"]).dt.strftime('%Y-%m-%d %H:%M:%S')
-                 st.dataframe(df_snaps, use_container_width=True, hide_index=True)
+                 st.dataframe(df_snaps, width="stretch", hide_index=True)
         except Exception as e:
             st.error(f"Error leyendo snapshots: {e}")
 

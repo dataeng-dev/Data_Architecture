@@ -72,6 +72,10 @@ CATALOG_PATH = DATABASE_DIR / "metadata.sqlite"
 # Dentro se organizan así:  lake_data/<esquema>/<tabla>/archivo.parquet
 LAKE_DATA_PATH = DATABASE_DIR / "lake_data"
 
+# Carpeta donde se publican los archivos Parquet consolidados de la capa Gold
+# listos para conectarse desde Power BI (un archivo limpio por tabla).
+POWERBI_EXPORT_PATH = DATABASE_DIR / "powerbi_gold"
+
 # =============================================================================
 # 2. PARÁMETROS DE DUCKLAKE
 # =============================================================================

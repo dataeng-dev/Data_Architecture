@@ -20,3 +20,4 @@ target/
 dbt_packages/
 logs/
 dbt.log
+dbt_internal_packages/
